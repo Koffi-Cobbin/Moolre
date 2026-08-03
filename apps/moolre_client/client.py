@@ -113,11 +113,17 @@ class MoolreClient:
             raise MoolreAuthError("MOOLRE API_USER is not configured")
         headers["X-API-USER"] = api_user
 
+        # Plan Section 2: "Sandbox ... only X-API-USER required; VAS key
+        # still needed for SMS/WhatsApp" — so API_KEY and API_PUBKEY are
+        # both optional in sandbox, but API_VASKEY is always required.
+        _sandbox_optional = {"API_KEY", "API_PUBKEY"}
+
         for key_type in key_types:
             value = self._config.get(key_type)
-            # API_KEY is not required in sandbox (plan Section 2); other
-            # environments/keys are required whenever the endpoint asks for them.
-            if not value and not (key_type == "API_KEY" and self._environment == "sandbox"):
+            optional_here = (
+                self._environment == "sandbox" and key_type in _sandbox_optional
+            )
+            if not value and not optional_here:
                 raise MoolreAuthError(f"MOOLRE {key_type} is not configured")
             if value:
                 header_name = {

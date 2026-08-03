@@ -14,6 +14,8 @@ codes directly.
 
 from __future__ import annotations
 
+import uuid
+
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -23,7 +25,17 @@ from apps.moolre_client.exceptions import MoolreAPIError, MoolreError, MoolreVal
 from apps.wallets import services
 from apps.wallets.models import Wallet
 
-from .serializers import WalletCreateSerializer, WalletSerializer, WalletUpdateSerializer
+from apps.payments import services as payment_services
+from apps.payments.models import PaymentRequest
+
+from .serializers import (
+    ConfirmOtpSerializer,
+    PaymentRequestCreateSerializer,
+    PaymentRequestSerializer,
+    WalletCreateSerializer,
+    WalletSerializer,
+    WalletUpdateSerializer,
+)
 
 
 def envelope(*, success: bool, data=None, code: str | None = None, message: str = "") -> dict:
@@ -111,3 +123,73 @@ def _error_response(exc: MoolreError) -> Response:
     return Response(
         envelope(success=False, code=code, message=str(exc)), status=http_status
     )
+
+
+class PaymentRequestViewSet(viewsets.ModelViewSet):
+    """
+    /api/payments/ussd/                              GET list, POST create
+    /api/payments/ussd/{externalref}/                GET retrieve
+    /api/payments/ussd/{externalref}/confirm-otp/    POST resubmit with otpcode
+    /api/payments/ussd/{externalref}/status/          GET on-demand status refresh
+
+    Mirrors plan Section 8's "Collections" table -- the {externalref}/status/
+    route lives here (mounted at /api/payments/ussd/.../status/) rather than
+    the separate top-level /api/payments/{externalref}/status/ path, since
+    payment links/virtual accounts (Milestone 4) will need their own status
+    lookups too and DRF routers don't share a lookup field across viewsets.
+    """
+
+    queryset = PaymentRequest.objects.all()
+    serializer_class = PaymentRequestSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+    lookup_field = "externalref"
+    lookup_value_regex = "[^/]+"
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = PaymentRequestCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        # Idempotency-Key handling (plan Section 8): generate an externalref
+        # if the caller didn't supply one, so a client can safely retry.
+        data.setdefault("externalref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        try:
+            payment_request = payment_services.initiate_ussd_payment(wallet, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=PaymentRequestSerializer(payment_request).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="confirm-otp")
+    def confirm_otp(self, request, externalref=None):
+        payment_request = self.get_object()
+        payload = ConfirmOtpSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            payment_request = payment_services.confirm_otp(
+                payment_request, otpcode=payload.validated_data["otpcode"]
+            )
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=PaymentRequestSerializer(payment_request).data))
+
+    @action(detail=True, methods=["get"], url_path="status")
+    def status_check(self, request, externalref=None):
+        payment_request = self.get_object()
+        try:
+            payment_request = payment_services.check_payment_status(payment_request)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=PaymentRequestSerializer(payment_request).data))

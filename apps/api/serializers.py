@@ -65,3 +65,56 @@ class WalletUpdateSerializer(serializers.Serializer):
     api_enabled = serializers.BooleanField(required=False)
     callback_url = serializers.URLField(required=False)
     settlement = serializers.DictField(required=False)
+
+
+# ---------------------------------------------------------------------------
+# Payments (collections) -- Milestone 3 scope (plan Section 8, "Collections")
+# ---------------------------------------------------------------------------
+
+from apps.payments.models import PaymentRequest  # noqa: E402
+
+
+class PaymentRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentRequest
+        fields = [
+            "id",
+            "wallet",
+            "channel",
+            "amount",
+            "currency",
+            "payer_msisdn",
+            "externalref",
+            "transactionid",
+            "session_id",
+            "status",
+            "otp_required",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "transactionid",
+            "session_id",
+            "status",
+            "otp_required",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class PaymentRequestCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/payments/ussd/ (plan Section 8)."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    channel = serializers.IntegerField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    payer_msisdn = serializers.CharField()
+    externalref = serializers.CharField(required=False)
+    reference = serializers.CharField(required=False)
+
+
+class ConfirmOtpSerializer(serializers.Serializer):
+    """Input shape for POST /api/payments/ussd/{externalref}/confirm-otp/."""
+
+    otpcode = serializers.CharField()

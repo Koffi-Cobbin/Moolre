@@ -34,6 +34,9 @@ class MoolreCode(str, Enum):
     # --- Webhooks (docs: payment-webhook) ---
     WEBHOOK_PAYMENT_SUCCESS = "P01"  # inbound callback: "Transaction Successful"
 
+    # --- Payment status (docs: payment-status) ---
+    PAYMENT_STATUS_FOUND = "SS01"  # transact/status success ("Transaction Successful")
+
     @classmethod
     def is_otp_required(cls, code: str) -> bool:
         return code == cls.OTP_REQUIRED.value
