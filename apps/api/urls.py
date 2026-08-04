@@ -5,9 +5,13 @@ from .views import (
     PaymentIdTerminalViewSet,
     PaymentLinkViewSet,
     PaymentRequestViewSet,
+    SenderIdViewSet,
+    SmsMessageViewSet,
     TransferViewSet,
     VirtualAccountViewSet,
     WalletViewSet,
+    WhatsAppMessageViewSet,
+    WhatsAppTemplateViewSet,
 )
 
 router = DefaultRouter()
@@ -18,8 +22,12 @@ router.register(r"payments/virtual-accounts", VirtualAccountViewSet, basename="v
 router.register(r"payments/payment-ids", PaymentIdTerminalViewSet, basename="payment-id-terminal")
 router.register(r"transfers/validate-name", NameValidationViewSet, basename="validate-name")
 router.register(r"transfers", TransferViewSet, basename="transfer")
+router.register(r"sms/sender-ids", SenderIdViewSet, basename="sender-id")
+router.register(r"sms", SmsMessageViewSet, basename="sms-message")
+router.register(r"whatsapp/templates", WhatsAppTemplateViewSet, basename="whatsapp-template")
+router.register(r"whatsapp/messages", WhatsAppMessageViewSet, basename="whatsapp-message")
 
 urlpatterns = router.urls
 
-# Messaging / reference-data routes (plan Section 8) are added here as
-# their services.py modules land in Milestone 6+.
+# Reference-data routes (plan Section 8, "Reference / misc") are added
+# here if that read-only slice is ever prioritized.

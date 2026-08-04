@@ -4,9 +4,10 @@ This is the Milestone 1 scaffold from `moolre-django-plan.md`
 ("Scaffolding: Django project, settings, `moolre_client` with `accounts` +
 `misc` endpoints only, admin skeleton") plus Milestone 2 ("Wallets"),
 Milestone 3 ("Collections: USSD push payment + status polling + webhook
-receiver"), Milestone 4 ("Payment links & virtual accounts"), and
-Milestone 5 ("Disbursements: name validation → transfer → status, with an
-approval step before money moves").
+receiver"), Milestone 4 ("Payment links & virtual accounts"), Milestone 5
+("Disbursements: name validation → transfer → status, with an approval
+step before money moves"), and Milestone 6 ("Messaging: SMS send/status,
+sender ID management, WhatsApp templates/send/status").
 
 ## What's implemented
 
@@ -17,13 +18,18 @@ approval step before money moves").
     timeout via `tenacity`, error mapping into `exceptions.py`.
   - `codes.py`: real Moolre response codes (`WC02`, `SW01`, `ST08`, `SD01`,
     `AIN04`, `TP13`, `TP14`, `TR099`, `P01`, `SS01`, `POS09`, `INP02`,
-    `AD14`, `AD19`, `AD32`, `AVD01`, `AVD02`, `OBGH01`) — pulled from
+    `AD14`, `AD19`, `AD32`, `AVD01`, `AVD02`, `OBGH01`, `SMS01`, `ASMS07`,
+    `AIN01`, `ASMQ01/03/07/08/09/10/12`, `WAS200`, `WAS401`) — pulled from
     `docs.moolre.com/ai/*` during scaffolding, not guessed.
-  - `endpoints/{accounts,misc,payments,transfers}.py` — fully implemented.
-    Note: transfer channel codes (`1=MTN, 6=Telecel, 7=AT, 2=Bank`) are
-    *different* from USSD collection channel codes (`13=MTN, 6=Telecel,
-    7=AT`) — confirmed from the docs, not assumed to be the same enum.
-  - `endpoints/{sms,whatsapp}.py` — documented placeholders for Milestone 6.
+  - `endpoints/{accounts,misc,payments,transfers,sms,whatsapp}.py` — all
+    fully implemented (every endpoint group from the plan's Section 2 API
+    surface now has a real wrapper). Note: transfer channel codes
+    (`1=MTN, 6=Telecel, 7=AT, 2=Bank`) are *different* from USSD collection
+    channel codes (`13=MTN, 6=Telecel, 7=AT`) — confirmed from the docs,
+    not assumed to be the same enum. Also confirmed all 7 SMS
+    status/management calls share one physical URL (`/open/sms/status`)
+    disambiguated only by `type` — documented in the module so nobody
+    reads it as 7 separate endpoints.
   - `signing.py` — webhook verification. Moolre's documented webhook
     payload has no signature header, so this implements the plan's
     "verify, don't trust" fallback (re-check status) instead of HMAC —
@@ -57,18 +63,25 @@ approval step before money moves").
   redelivery, same pattern as payments), and an admin with a guarded
   "Retry transfer" action that renders an explicit confirmation page
   before resending (plan Section 9).
+- **`apps/messaging/`** — full vertical slice: `SenderId`, `SmsMessage`,
+  `WhatsAppTemplate`, `WhatsAppMessage` models (no `wallet` FK — Moolre's
+  `X-API-VASKEY` is account-level, not per-wallet, matching the plan's own
+  model list for this domain). `services.py` covers send (single + bulk
+  SMS), status checks, SMS credit balance, sender ID request/list/refresh/
+  approve, and WhatsApp template sync/send/status. Admin has sync/refresh/
+  approve/reject actions.
 - **`apps/api/`** — DRF `WalletViewSet`, `PaymentRequestViewSet`,
   `PaymentLinkViewSet`, `VirtualAccountViewSet`, `PaymentIdTerminalViewSet`,
-  `TransferViewSet`, `NameValidationViewSet` mirroring the plan's tables
-  (list/create/retrieve + `/balance/`, `/transactions/`, `/confirm-otp/`,
-  `/status/`, `/approve/`, `/reject/`), wrapped in the `{success, code,
-  message, data}` envelope from Section 8. `Transfer` creation is open to
-  any authenticated user; `/approve/` and `/reject/` require staff
-  (`IsAdminUser`) — enforcing the maker-checker split at the permission
-  layer, not just in the service function.
-- **`apps/{transfers,messaging,ledger}/`** — valid, migratable Django apps
-  with no models yet; each `models.py` documents exactly what lands there
-  and in which milestone, per the plan's build order.
+  `TransferViewSet`, `NameValidationViewSet`, `SmsMessageViewSet`,
+  `SenderIdViewSet`, `WhatsAppTemplateViewSet`, `WhatsAppMessageViewSet` —
+  every domain from the plan's Section 8 API tables now has a working
+  endpoint, wrapped in the `{success, code, message, data}` envelope.
+  `Transfer` and `SenderId` approval actions require staff (`IsAdminUser`),
+  enforcing the maker-checker/approval split at the permission layer.
+- **`apps/ledger/`** — the plan's one *optional*, unscheduled app (Section
+  3: "internal double-entry bookkeeping / reconciliation"); still a valid,
+  migratable Django app with no models, since it's out of the v1 build
+  order entirely (plan Section 13).
 - `config/` — settings (`dev.py` forces sandbox, per the plan), root
   URLconf, WSGI/ASGI, and a `celery.py` placeholder (Celery itself is
   v2 scope per plan Section 7).
@@ -127,8 +140,25 @@ HTTP layer mocked:
   "Retry transfer" action's intermediate confirmation page was rendered
   and checked for content, not just imported
 
+- Milestone 6: SMS send/status/account-balance and WhatsApp templates/
+  send/status against a mocked layer (asserting `API_VASKEY` auth on every
+  call); sender ID request → approve flow; a real route-ordering bug was
+  caught and fixed here (`/api/sms/sender-ids/` was initially getting
+  swallowed by `SmsMessageViewSet`'s `<ref>` detail regex — same class of
+  issue as the `transfers/validate-name` fix in Milestone 5, now fixed the
+  same way: register the more specific prefix first); DRF permission split
+  tested directly on `/api/sms/sender-ids/{id}/approve/` (403 regular
+  user, 200 staff)
+
 ## Next up (per the plan's build order, Section 13)
 
-6. Messaging: SMS + WhatsApp (`apps/messaging/`)
-7. Round out the REST API layer for the above
-8. Hardening, then go-live
+7. Round out the REST API layer's remaining gaps (plan Section 8's
+   "Reference / misc" table — banks/channels lookup — is the one row not
+   yet wired to an endpoint)
+8. Hardening: rate limiting on transfer/messaging endpoints, audit logging
+   on money-moving actions (partially done via `requested_by`/`approved_by`
+   on `Transfer`)
+9. Go-live: switch to live keys, load-test the webhook endpoint, monitoring/
+   alerts on failed transfers and webhook processing errors
+
+All 6 v1 milestones from the plan's build order are now implemented.

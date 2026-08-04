@@ -304,3 +304,82 @@ class ConfirmTransferOtpSerializer(serializers.Serializer):
     """Input shape for POST /api/transfers/{externalref}/confirm-otp/."""
 
     otpcode = serializers.CharField()
+
+
+# ---------------------------------------------------------------------------
+# Messaging: SMS + WhatsApp -- Milestone 6 scope (plan Section 8)
+# ---------------------------------------------------------------------------
+
+from apps.messaging.models import SenderId, SmsMessage, WhatsAppMessage, WhatsAppTemplate  # noqa: E402
+
+
+class SenderIdSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SenderId
+        fields = ["id", "name", "approval_status", "whitelisted", "moolre_id", "created_at", "updated_at"]
+        read_only_fields = ["id", "approval_status", "whitelisted", "moolre_id", "created_at", "updated_at"]
+
+
+class SenderIdCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/sms/sender-ids/."""
+
+    name = serializers.CharField(max_length=11)
+
+
+class SmsMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SmsMessage
+        fields = [
+            "id", "senderid", "recipient", "message", "ref", "status",
+            "provider_status", "sent_at", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "status", "provider_status", "sent_at", "created_at", "updated_at"]
+
+
+class SmsMessageCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/sms/ (plan Section 8: accepts an array of
+    recipients for bulk sends).
+    """
+
+    senderid = serializers.PrimaryKeyRelatedField(queryset=SenderId.objects.all())
+    recipient = serializers.CharField(required=False)
+    message = serializers.CharField(required=False)
+    messages = serializers.ListField(child=serializers.DictField(), required=False)
+
+    def validate(self, attrs):
+        has_single = "recipient" in attrs and "message" in attrs
+        has_bulk = "messages" in attrs
+        if not (has_single or has_bulk):
+            raise serializers.ValidationError(
+                "Provide either recipient+message (single) or messages (bulk array)."
+            )
+        return attrs
+
+
+class WhatsAppTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WhatsAppTemplate
+        fields = ["id", "template_id", "name", "language", "status", "body", "placeholders", "updated_at"]
+        read_only_fields = fields
+
+
+class WhatsAppMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WhatsAppMessage
+        fields = ["id", "template", "recipient", "ref", "placeholders", "status", "created_at", "updated_at"]
+        read_only_fields = ["id", "status", "created_at", "updated_at"]
+
+
+class WhatsAppMessageCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/whatsapp/messages/."""
+
+    template = serializers.PrimaryKeyRelatedField(queryset=WhatsAppTemplate.objects.all())
+    recipient = serializers.CharField()
+    ref = serializers.CharField(required=False)
+    placeholders = serializers.DictField(required=False)
+
+
+class RefListSerializer(serializers.Serializer):
+    """Input shape for POST /api/whatsapp/messages/status/bulk/."""
+
+    refs = serializers.ListField(child=serializers.CharField())

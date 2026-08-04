@@ -54,6 +54,25 @@ class MoolreCode(str, Enum):
     TRANSFER_SUCCESS = "OBGH01"     # transact/transfer success (payout completed)
     # TP14, TR099, TP13 (already defined above) are reused by internal_transfer()
 
+    # --- SMS (docs: send-sms, sms-status, sms-account-status,
+    #     create-sender-id, sender-id-status, list-sender-ids,
+    #     approve-sender-id) ---
+    SMS_SENT = "SMS01"                    # sms/send success
+    SMS_SENDER_ID_UNAPPROVED = "ASMS07"   # sms/send: sender ID not approved
+    SMS_AUTH_ERROR = "AIN01"              # invalid/missing X-API-VASKEY
+    SMS_STATUS_FOUND = "ASMQ10"           # sms/status (type=5) success
+    SMS_ACCOUNT_STATUS_FOUND = "ASMQ03"   # sms/status (type=2) success -- credit balance
+    SMS_SENDER_ID_CREATED = "ASMQ12"      # sms/query (type=3) success
+    SMS_SENDER_ID_STATUS_FOUND = "ASMQ01" # sms/status (type=1) success
+    SMS_SENDER_ID_LIST_FOUND = "ASMQ08"   # sms/status (type=7) success
+    SMS_SENDER_ID_UPDATED = "ASMQ07"      # sms/status (type=6) success -- approve/reject
+    SMS_SENDER_ID_PERMISSION_DENIED = "ASMQ09"  # not authorized to approve/reject sender IDs
+
+    # --- WhatsApp (docs: whatsapp-get-templates, whatsapp-send-message,
+    #     whatsapp-message-status) ---
+    WHATSAPP_SUCCESS = "WAS200"           # generic success across all 3 WhatsApp endpoints
+    WHATSAPP_INSUFFICIENT_BALANCE = "WAS401"  # whatsapp/send: WhatsApp bundle exhausted
+
     @classmethod
     def is_otp_required(cls, code: str) -> bool:
         return code == cls.OTP_REQUIRED.value

@@ -32,6 +32,9 @@ from apps.payments.models import PaymentIdTerminal, PaymentLink, PaymentRequest,
 from apps.transfers import services as transfer_services
 from apps.transfers.models import Transfer
 
+from apps.messaging import services as messaging_services
+from apps.messaging.models import SenderId, SmsMessage, WhatsAppMessage, WhatsAppTemplate
+
 from .serializers import (
     ConfirmOtpSerializer,
     ConfirmTransferOtpSerializer,
@@ -43,6 +46,11 @@ from .serializers import (
     PaymentLinkSerializer,
     PaymentRequestCreateSerializer,
     PaymentRequestSerializer,
+    RefListSerializer,
+    SenderIdCreateSerializer,
+    SenderIdSerializer,
+    SmsMessageCreateSerializer,
+    SmsMessageSerializer,
     TransferCreateSerializer,
     TransferSerializer,
     ValidateNameSerializer,
@@ -51,6 +59,9 @@ from .serializers import (
     WalletCreateSerializer,
     WalletSerializer,
     WalletUpdateSerializer,
+    WhatsAppMessageCreateSerializer,
+    WhatsAppMessageSerializer,
+    WhatsAppTemplateSerializer,
 )
 
 
@@ -443,3 +454,192 @@ class NameValidationViewSet(ViewSet):
             envelope(success=True, data=NameValidationLogSerializer(log).data),
             status=status.HTTP_201_CREATED,
         )
+
+
+class SmsMessageViewSet(viewsets.ModelViewSet):
+    """
+    /api/sms/                GET list, POST create (single or bulk send)
+    /api/sms/{ref}/status/   GET on-demand delivery status refresh
+    """
+
+    queryset = SmsMessage.objects.all()
+    serializer_class = SmsMessageSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+    lookup_field = "ref"
+    lookup_value_regex = "[^/]+"
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = SmsMessageCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        senderid = data["senderid"]
+        try:
+            if "messages" in data:
+                records = messaging_services.send_bulk_sms(senderid, messages=data["messages"])
+                result = SmsMessageSerializer(records, many=True).data
+            else:
+                record = messaging_services.send_sms(
+                    senderid, recipient=data["recipient"], message=data["message"]
+                )
+                result = SmsMessageSerializer(record).data
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=result), status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["get"], url_path="status")
+    def status_check(self, request, ref=None):
+        try:
+            messaging_services.check_sms_status([ref])
+        except MoolreError as exc:
+            return _error_response(exc)
+        record = self.get_object()
+        return Response(envelope(success=True, data=SmsMessageSerializer(record).data))
+
+    @action(detail=False, methods=["get"], url_path="account-status")
+    def account_status(self, request):
+        try:
+            balance = messaging_services.get_sms_account_balance()
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data={"balance": balance}))
+
+
+class SenderIdViewSet(viewsets.ModelViewSet):
+    """
+    /api/sms/sender-ids/                GET list, POST create (request new)
+    /api/sms/sender-ids/{id}/status/    GET on-demand approval status refresh
+    /api/sms/sender-ids/{id}/approve/   POST approve/reject (staff only)
+    """
+
+    queryset = SenderId.objects.all()
+    serializer_class = SenderIdSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = SenderIdCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            sender_id = messaging_services.request_sender_id(payload.validated_data["name"])
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=SenderIdSerializer(sender_id).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"], url_path="status")
+    def status_check(self, request, pk=None):
+        sender_id = self.get_object()
+        try:
+            sender_id = messaging_services.refresh_sender_id_status(sender_id)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=SenderIdSerializer(sender_id).data))
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
+    def approve(self, request, pk=None):
+        # Plan Section 8: "/approve/ ... IsAdminUser-only".
+        sender_id = self.get_object()
+        approve = bool(request.data.get("approve", True))
+        try:
+            sender_id = messaging_services.approve_sender_id(sender_id, approve=approve)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=SenderIdSerializer(sender_id).data))
+
+
+class WhatsAppTemplateViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    /api/whatsapp/templates/  GET list (cached locally, sync via admin action)
+    """
+
+    queryset = WhatsAppTemplate.objects.all()
+    serializer_class = WhatsAppTemplateSerializer
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+
+class WhatsAppMessageViewSet(viewsets.ModelViewSet):
+    """
+    /api/whatsapp/messages/                GET list, POST create
+    /api/whatsapp/messages/{ref}/status/   GET on-demand status refresh
+    /api/whatsapp/messages/status/bulk/    POST batch status check
+    """
+
+    queryset = WhatsAppMessage.objects.all()
+    serializer_class = WhatsAppMessageSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+    lookup_field = "ref"
+    lookup_value_regex = "[^/]+"
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = WhatsAppMessageCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        template = data.pop("template")
+        try:
+            msg = messaging_services.send_whatsapp_message(template, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=WhatsAppMessageSerializer(msg).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["get"], url_path="status")
+    def status_check(self, request, ref=None):
+        try:
+            messaging_services.check_whatsapp_status([ref])
+        except MoolreError as exc:
+            return _error_response(exc)
+        record = self.get_object()
+        return Response(envelope(success=True, data=WhatsAppMessageSerializer(record).data))
+
+    @action(detail=False, methods=["post"], url_path="status/bulk")
+    def status_bulk(self, request):
+        payload = RefListSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        refs = payload.validated_data["refs"]
+        try:
+            records = messaging_services.check_whatsapp_status(refs)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=WhatsAppMessageSerializer(records, many=True).data))
