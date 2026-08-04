@@ -2,8 +2,8 @@
 Payments (collections) domain models (plan Section 4).
 
 Milestone 3 scope: PaymentRequest (USSD push) + WebhookEvent (audit log of
-every inbound callback). PaymentLink, VirtualAccount, and PaymentIdTerminal
-remain Milestone 4 -- see the TODO at the bottom of this file.
+every inbound callback).
+Milestone 4 scope: PaymentLink, VirtualAccount, PaymentIdTerminal.
 """
 
 from django.db import models
@@ -79,5 +79,85 @@ class WebhookEvent(models.Model):
         return f"WebhookEvent({externalref}, processed={self.processed})"
 
 
-# TODO(milestone-4): PaymentLink, VirtualAccount, PaymentIdTerminal
-# (plan Section 4, remaining "payments (collections)" models).
+class PaymentLink(models.Model):
+    """A hosted Moolre Web POS payment link (plan Section 4).
+
+    Source: docs.moolre.com/ai/generate-payment-link.html (POST /embed/link).
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        EXPIRED = "expired", "Expired"
+
+    wallet = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="payment_links")
+    externalref = models.CharField(max_length=64, unique=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    currency = models.CharField(max_length=3, default="GHS")
+    authorization_url = models.URLField(blank=True)
+    reusable = models.BooleanField(default=False)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.ACTIVE)
+    raw_response = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"PaymentLink({self.externalref})"
+
+
+class VirtualAccount(models.Model):
+    """A permanent virtual bank account for collections (plan Section 4).
+
+    Source: docs.moolre.com/ai/create-bank-account-number.html --
+    account/create, type=9. `uref` is the client-generated idempotency
+    reference (docs call it "Unique request reference").
+    """
+
+    wallet = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="virtual_accounts")
+    accountno = models.CharField(max_length=32, blank=True)
+    accountname = models.CharField(max_length=255, blank=True)
+    bankname = models.CharField(max_length=255, blank=True)
+    uref = models.CharField(max_length=64, unique=True)
+    holder_first_name = models.CharField(max_length=100)
+    holder_last_name = models.CharField(max_length=100)
+    phone = models.CharField(max_length=20)
+    email = models.EmailField()
+    raw_response = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"VirtualAccount({self.accountno or self.uref})"
+
+
+class PaymentIdTerminal(models.Model):
+    """A reusable *203*paymentid# terminal (plan Section 4).
+
+    Source: docs.moolre.com/ai/create-payment-id.html -- account/create,
+    type=2.
+    """
+
+    wallet = models.ForeignKey(Wallet, on_delete=models.PROTECT, related_name="payment_id_terminals")
+    paymentid = models.CharField(max_length=32, blank=True)
+    holder_name = models.CharField(max_length=255)
+    phone = models.CharField(max_length=20)
+    externalref = models.CharField(max_length=64, blank=True)
+    raw_response = models.JSONField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"PaymentIdTerminal({self.paymentid or self.holder_name})"

@@ -1,22 +1,21 @@
 """
 Payment / collection endpoints (plan Section 2, "Payment" row group).
 
-Milestone 3 scope: USSD push collection + status check. Payment links,
-virtual accounts, and payment-ID terminals remain Milestone 4 (see the
-TODOs still in this module).
+Milestone 3 scope: USSD push collection + status check.
+Milestone 4 scope: payment links, virtual bank accounts, payment-ID
+terminals (all implemented below).
 
-Sources:
-    - Auth headers: plan Section 2 ("X-API-PUBKEY -- public key (payment
-      collection endpoints)"), confirmed against docs.moolre.com/ai/
-      payment-status.md which documents X-API-PUBKEY for /open/transact/status.
-    - Request shape: plan Section 5's own initiate_ussd_payment() example
-      (channel, currency, payer, amount, externalref, reference,
-      accountnumber).
-    - Response codes: docs.moolre.com/ai/initiate-payment.md -- TR099
-      (accepted, awaiting payer action), TP14 (OTP required), TP13
-      (duplicate externalref) -- see codes.py.
-    - Status response shape: docs.moolre.com/ai/payment-status.md -- SS01,
-      idtype (1=externalref, 2=Moolre-generated id).
+Sources (all confirmed against docs.moolre.com/ai/* during scaffolding):
+    - initiate_ussd()/status(): docs.moolre.com/ai/initiate-payment.md,
+      payment-status.md -- TR099, TP14, TP13, SS01 (see codes.py).
+    - create_payment_id(): docs.moolre.com/ai/create-payment-id.html --
+      same physical URL as account/create but type=2 and X-API-PUBKEY
+      (not X-API-KEY -- the plan's Account/Payment split in Section 2
+      corresponds to different `type` values on the same endpoint).
+    - create_virtual_account(): docs.moolre.com/ai/
+      create-bank-account-number.html -- account/create, type=9, X-API-PUBKEY.
+    - create_payment_link(): docs.moolre.com/ai/generate-payment-link.html --
+      POST /embed/link, X-API-PUBKEY, POS09 success / INP02 duplicate.
 """
 
 from __future__ import annotations
@@ -83,6 +82,102 @@ class PaymentsEndpoints:
             "POST", "/open/transact/status", key_types=("API_PUBKEY",), json=payload
         )
 
-    # TODO(milestone-4): create_payment_id(), create_virtual_account(),
-    # create_payment_link() -- payment links, *203*id# terminals, virtual
-    # bank accounts (plan Section 2, remaining "Payment" rows).
+    def create_payment_id(
+        self,
+        *,
+        accountnumber: str,
+        phone: str,
+        name: str,
+        currency: str,
+        externalref: str | None = None,
+    ) -> dict:
+        """POST /open/account/create (type=2) -- reusable *203*id# terminal.
+
+        Source: docs.moolre.com/ai/create-payment-id.html -- success AD14.
+        """
+        payload: dict[str, Any] = {
+            "type": 2,
+            "accountnumber": accountnumber,
+            "phone": phone,
+            "name": name,
+            "currency": currency,
+        }
+        if externalref is not None:
+            payload["externalref"] = externalref
+        return self._client.request(
+            "POST", "/open/account/create", key_types=("API_PUBKEY",), json=payload
+        )
+
+    def create_virtual_account(
+        self,
+        *,
+        accountnumber: str,
+        currency: str,
+        firstname: str,
+        lastname: str,
+        phone: str,
+        email: str,
+        uref: str,
+        amount: str | None = None,
+    ) -> dict:
+        """POST /open/account/create (type=9) -- permanent virtual bank account.
+
+        Source: docs.moolre.com/ai/create-bank-account-number.html -- success
+        AD19, duplicate-name failure AD32.
+        """
+        payload: dict[str, Any] = {
+            "type": 9,
+            "accountnumber": accountnumber,
+            "currency": currency,
+            "firstname": firstname,
+            "lastname": lastname,
+            "phone": phone,
+            "email": email,
+            "uref": uref,
+        }
+        if amount is not None:
+            payload["amount"] = amount
+        return self._client.request(
+            "POST", "/open/account/create", key_types=("API_PUBKEY",), json=payload
+        )
+
+    def create_payment_link(
+        self,
+        *,
+        accountnumber: str,
+        amount: str,
+        email: str,
+        externalref: str,
+        currency: str,
+        reusable: str = "0",
+        callback: str | None = None,
+        redirect: str | None = None,
+        expiration_time: int | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
+        """POST /embed/link -- generate a hosted Moolre Web POS payment page.
+
+        `reusable`: "0"=single-use, "1"=repeat payments (per docs, this is
+        a string, not a bool). Source: docs.moolre.com/ai/
+        generate-payment-link.html -- success POS09, duplicate ref INP02.
+        """
+        payload: dict[str, Any] = {
+            "type": 1,
+            "accountnumber": accountnumber,
+            "amount": amount,
+            "email": email,
+            "externalref": externalref,
+            "currency": currency,
+            "reusable": reusable,
+        }
+        if callback is not None:
+            payload["callback"] = callback
+        if redirect is not None:
+            payload["redirect"] = redirect
+        if expiration_time is not None:
+            payload["expiration_time"] = expiration_time
+        if metadata is not None:
+            payload["metadata"] = metadata
+        return self._client.request(
+            "POST", "/embed/link", key_types=("API_PUBKEY",), json=payload
+        )

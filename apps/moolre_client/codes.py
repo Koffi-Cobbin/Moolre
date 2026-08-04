@@ -37,6 +37,16 @@ class MoolreCode(str, Enum):
     # --- Payment status (docs: payment-status) ---
     PAYMENT_STATUS_FOUND = "SS01"  # transact/status success ("Transaction Successful")
 
+    # --- Payment links (docs: generate-payment-link) ---
+    PAYMENT_LINK_CREATED = "POS09"      # embed/link success
+    PAYMENT_LINK_DUPLICATE = "INP02"    # duplicate externalref/reference
+
+    # --- Payment IDs / virtual accounts (docs: create-payment-id,
+    #     create-bank-account-number) ---
+    TERMINAL_CREATED = "AD14"           # account/create (type=2) success -- *203*id# payment ID
+    VIRTUAL_ACCOUNT_CREATED = "AD19"    # account/create (type=9) success -- virtual bank account
+    VIRTUAL_ACCOUNT_DUPLICATE_NAME = "AD32"  # virtual account creation failed, name already in use
+
     @classmethod
     def is_otp_required(cls, code: str) -> bool:
         return code == cls.OTP_REQUIRED.value

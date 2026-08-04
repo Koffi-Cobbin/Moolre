@@ -26,12 +26,18 @@ from apps.wallets import services
 from apps.wallets.models import Wallet
 
 from apps.payments import services as payment_services
-from apps.payments.models import PaymentRequest
+from apps.payments.models import PaymentIdTerminal, PaymentLink, PaymentRequest, VirtualAccount
 
 from .serializers import (
     ConfirmOtpSerializer,
+    PaymentIdTerminalCreateSerializer,
+    PaymentIdTerminalSerializer,
+    PaymentLinkCreateSerializer,
+    PaymentLinkSerializer,
     PaymentRequestCreateSerializer,
     PaymentRequestSerializer,
+    VirtualAccountCreateSerializer,
+    VirtualAccountSerializer,
     WalletCreateSerializer,
     WalletSerializer,
     WalletUpdateSerializer,
@@ -193,3 +199,111 @@ class PaymentRequestViewSet(viewsets.ModelViewSet):
         except MoolreError as exc:
             return _error_response(exc)
         return Response(envelope(success=True, data=PaymentRequestSerializer(payment_request).data))
+
+
+class PaymentLinkViewSet(viewsets.ModelViewSet):
+    """
+    /api/payments/links/                GET list, POST create (embed/link)
+    /api/payments/links/{externalref}/  GET retrieve
+    """
+
+    queryset = PaymentLink.objects.all()
+    serializer_class = PaymentLinkSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+    lookup_field = "externalref"
+    lookup_value_regex = "[^/]+"
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = PaymentLinkCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        data.setdefault("externalref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        try:
+            payment_link = payment_services.create_payment_link(wallet, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=PaymentLinkSerializer(payment_link).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class VirtualAccountViewSet(viewsets.ModelViewSet):
+    """
+    /api/payments/virtual-accounts/  GET list, POST create (account/create type=9)
+    """
+
+    queryset = VirtualAccount.objects.all()
+    serializer_class = VirtualAccountSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = VirtualAccountCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        data.setdefault("uref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        try:
+            virtual_account = payment_services.create_virtual_account(wallet, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=VirtualAccountSerializer(virtual_account).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class PaymentIdTerminalViewSet(viewsets.ModelViewSet):
+    """
+    /api/payments/payment-ids/  GET list, POST create (account/create type=2)
+    """
+
+    queryset = PaymentIdTerminal.objects.all()
+    serializer_class = PaymentIdTerminalSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+
+    def list(self, request, *args, **kwargs):
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        payload = PaymentIdTerminalCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        data.setdefault("externalref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        try:
+            terminal = payment_services.create_payment_id_terminal(wallet, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=PaymentIdTerminalSerializer(terminal).data),
+            status=status.HTTP_201_CREATED,
+        )

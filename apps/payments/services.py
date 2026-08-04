@@ -17,7 +17,7 @@ from apps.moolre_client.codes import MoolreCode
 from apps.moolre_client.exceptions import MoolreAPIError
 from apps.wallets.models import Wallet
 
-from .models import PaymentRequest
+from .models import PaymentIdTerminal, PaymentLink, PaymentRequest, VirtualAccount
 from .signals import payment_completed, payment_failed
 
 
@@ -116,7 +116,116 @@ def check_payment_status(payment_request: PaymentRequest) -> PaymentRequest:
     return payment_request
 
 
-# -- internal helpers ----------------------------------------------------------
+def create_payment_link(
+    wallet: Wallet,
+    *,
+    amount,
+    email: str,
+    externalref: str,
+    reusable: bool = False,
+    callback: str | None = None,
+    redirect: str | None = None,
+    expiration_time: int | None = None,
+    metadata: dict | None = None,
+) -> PaymentLink:
+    """Generate a hosted payment page via `embed/link`.
+
+    Source: docs.moolre.com/ai/generate-payment-link.html.
+    """
+    client = _client()
+    response = client.payments.create_payment_link(
+        accountnumber=wallet.accountnumber,
+        amount=str(amount),
+        email=email,
+        externalref=externalref,
+        currency=wallet.currency,
+        reusable="1" if reusable else "0",
+        callback=callback,
+        redirect=redirect,
+        expiration_time=expiration_time,
+        metadata=metadata,
+    )
+    data = response["data"]
+    return PaymentLink.objects.create(
+        wallet=wallet,
+        externalref=externalref,
+        amount=amount,
+        currency=wallet.currency,
+        authorization_url=data.get("authorization_url", ""),
+        reusable=reusable,
+        metadata=metadata,
+        raw_response=response,
+    )
+
+
+def create_virtual_account(
+    wallet: Wallet,
+    *,
+    firstname: str,
+    lastname: str,
+    phone: str,
+    email: str,
+    uref: str,
+    amount=None,
+) -> VirtualAccount:
+    """Create a permanent virtual bank account via `account/create` (type=9).
+
+    Source: docs.moolre.com/ai/create-bank-account-number.html.
+    """
+    client = _client()
+    response = client.payments.create_virtual_account(
+        accountnumber=wallet.accountnumber,
+        currency=wallet.currency,
+        firstname=firstname,
+        lastname=lastname,
+        phone=phone,
+        email=email,
+        uref=uref,
+        amount=str(amount) if amount is not None else None,
+    )
+    data = response["data"]
+    return VirtualAccount.objects.create(
+        wallet=wallet,
+        accountno=data.get("accountno", ""),
+        accountname=data.get("accountname", ""),
+        bankname=data.get("bankname", ""),
+        uref=data.get("uref", uref),
+        holder_first_name=firstname,
+        holder_last_name=lastname,
+        phone=phone,
+        email=email,
+        raw_response=response,
+    )
+
+
+def create_payment_id_terminal(
+    wallet: Wallet,
+    *,
+    phone: str,
+    name: str,
+    externalref: str | None = None,
+) -> PaymentIdTerminal:
+    """Create a reusable *203*id# payment terminal via `account/create` (type=2).
+
+    Source: docs.moolre.com/ai/create-payment-id.html.
+    """
+    client = _client()
+    response = client.payments.create_payment_id(
+        accountnumber=wallet.accountnumber,
+        phone=phone,
+        name=name,
+        currency=wallet.currency,
+        externalref=externalref,
+    )
+    data = response["data"]
+    return PaymentIdTerminal.objects.create(
+        wallet=wallet,
+        paymentid=data.get("paymentid", ""),
+        holder_name=data.get("name", name),
+        phone=phone,
+        externalref=externalref or "",
+        raw_response=response,
+    )
 
 
 def _apply_initiate_response(payment_request: PaymentRequest, response: dict) -> PaymentRequest:

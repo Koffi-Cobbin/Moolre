@@ -1,7 +1,7 @@
 from django.contrib import admin, messages
 
 from . import services
-from .models import PaymentRequest, WebhookEvent
+from .models import PaymentIdTerminal, PaymentLink, PaymentRequest, VirtualAccount, WebhookEvent
 
 
 @admin.register(PaymentRequest)
@@ -63,3 +63,25 @@ class WebhookEventAdmin(admin.ModelAdmin):
                 event.processed = True
                 event.save(update_fields=["processed"])
                 self.message_user(request, f"Event {event.id}: reprocessed")
+
+
+@admin.register(PaymentLink)
+class PaymentLinkAdmin(admin.ModelAdmin):
+    list_display = ("externalref", "wallet", "amount", "currency", "reusable", "status", "created_at")
+    list_filter = ("status", "reusable", "currency")
+    search_fields = ("externalref", "authorization_url")
+    readonly_fields = ("authorization_url", "raw_response", "created_at", "updated_at")
+
+
+@admin.register(VirtualAccount)
+class VirtualAccountAdmin(admin.ModelAdmin):
+    list_display = ("accountno", "accountname", "bankname", "wallet", "phone", "created_at")
+    search_fields = ("accountno", "accountname", "uref", "phone", "email")
+    readonly_fields = ("accountno", "accountname", "bankname", "raw_response", "created_at", "updated_at")
+
+
+@admin.register(PaymentIdTerminal)
+class PaymentIdTerminalAdmin(admin.ModelAdmin):
+    list_display = ("paymentid", "holder_name", "phone", "wallet", "created_at")
+    search_fields = ("paymentid", "holder_name", "phone", "externalref")
+    readonly_fields = ("paymentid", "raw_response", "created_at", "updated_at")

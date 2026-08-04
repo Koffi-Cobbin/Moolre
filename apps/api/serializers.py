@@ -118,3 +118,102 @@ class ConfirmOtpSerializer(serializers.Serializer):
     """Input shape for POST /api/payments/ussd/{externalref}/confirm-otp/."""
 
     otpcode = serializers.CharField()
+
+
+# ---------------------------------------------------------------------------
+# Payment links / virtual accounts / payment IDs -- Milestone 4 scope
+# (plan Section 8, "Collections" table)
+# ---------------------------------------------------------------------------
+
+from apps.payments.models import PaymentIdTerminal, PaymentLink, VirtualAccount  # noqa: E402
+
+
+class PaymentLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentLink
+        fields = [
+            "id",
+            "wallet",
+            "externalref",
+            "amount",
+            "currency",
+            "authorization_url",
+            "reusable",
+            "expires_at",
+            "metadata",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "authorization_url", "status", "created_at", "updated_at"]
+
+
+class PaymentLinkCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/payments/links/ (plan Section 8)."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    email = serializers.EmailField()
+    externalref = serializers.CharField(required=False)
+    reusable = serializers.BooleanField(required=False, default=False)
+    callback = serializers.URLField(required=False)
+    redirect = serializers.URLField(required=False)
+    expiration_time = serializers.IntegerField(required=False)
+    metadata = serializers.DictField(required=False)
+
+
+class VirtualAccountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VirtualAccount
+        fields = [
+            "id",
+            "wallet",
+            "accountno",
+            "accountname",
+            "bankname",
+            "uref",
+            "holder_first_name",
+            "holder_last_name",
+            "phone",
+            "email",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "accountno", "accountname", "bankname", "created_at", "updated_at"]
+
+
+class VirtualAccountCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/payments/virtual-accounts/ (plan Section 8)."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    firstname = serializers.CharField()
+    lastname = serializers.CharField()
+    phone = serializers.CharField()
+    email = serializers.EmailField()
+    uref = serializers.CharField(required=False)
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2, required=False)
+
+
+class PaymentIdTerminalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentIdTerminal
+        fields = [
+            "id",
+            "wallet",
+            "paymentid",
+            "holder_name",
+            "phone",
+            "externalref",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "paymentid", "created_at", "updated_at"]
+
+
+class PaymentIdTerminalCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/payments/payment-ids/ (plan Section 8)."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    phone = serializers.CharField()
+    name = serializers.CharField()
+    externalref = serializers.CharField(required=False)
