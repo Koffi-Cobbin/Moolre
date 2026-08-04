@@ -18,8 +18,9 @@ import uuid
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.viewsets import ViewSet
 
 from apps.moolre_client.exceptions import MoolreAPIError, MoolreError, MoolreValidationError
 from apps.wallets import services
@@ -28,14 +29,23 @@ from apps.wallets.models import Wallet
 from apps.payments import services as payment_services
 from apps.payments.models import PaymentIdTerminal, PaymentLink, PaymentRequest, VirtualAccount
 
+from apps.transfers import services as transfer_services
+from apps.transfers.models import Transfer
+
 from .serializers import (
     ConfirmOtpSerializer,
+    ConfirmTransferOtpSerializer,
+    InternalTransferCreateSerializer,
+    NameValidationLogSerializer,
     PaymentIdTerminalCreateSerializer,
     PaymentIdTerminalSerializer,
     PaymentLinkCreateSerializer,
     PaymentLinkSerializer,
     PaymentRequestCreateSerializer,
     PaymentRequestSerializer,
+    TransferCreateSerializer,
+    TransferSerializer,
+    ValidateNameSerializer,
     VirtualAccountCreateSerializer,
     VirtualAccountSerializer,
     WalletCreateSerializer,
@@ -305,5 +315,131 @@ class PaymentIdTerminalViewSet(viewsets.ModelViewSet):
             return _error_response(exc)
         return Response(
             envelope(success=True, data=PaymentIdTerminalSerializer(terminal).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class TransferViewSet(viewsets.ModelViewSet):
+    """
+    /api/transfers/                       GET list, POST create (writes
+                                           PENDING_APPROVAL only -- no
+                                           Moolre call, plan Section 8)
+    /api/transfers/internal/              POST create internal transfer
+                                           (also PENDING_APPROVAL only)
+    /api/transfers/{externalref}/         GET retrieve
+    /api/transfers/{externalref}/approve/ POST approve + actually send
+                                           (staff/admin only -- maker-checker)
+    /api/transfers/{externalref}/reject/  POST reject without sending
+    /api/transfers/{externalref}/confirm-otp/  POST resubmit with otpcode
+    /api/transfers/{externalref}/status/  GET on-demand status refresh
+    """
+
+    queryset = Transfer.objects.all()
+    serializer_class = TransferSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "post", "head", "options"]
+    lookup_field = "externalref"
+    lookup_value_regex = "[^/]+"
+
+    def list(self, request, *args, **kwargs):
+        qs = self.get_queryset()
+        for param in ("status", "channel"):
+            value = request.query_params.get(param)
+            if value:
+                qs = qs.filter(**{param: value})
+        serializer = self.get_serializer(qs, many=True)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(envelope(success=True, data=serializer.data))
+
+    def create(self, request, *args, **kwargs):
+        """External MoMo/bank payout -- writes PENDING_APPROVAL only."""
+        payload = TransferCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        data.setdefault("externalref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        xfer = transfer_services.create_transfer(wallet, requested_by=request.user, **data)
+        return Response(
+            envelope(success=True, data=TransferSerializer(xfer).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=["post"])
+    def internal(self, request):
+        """Internal wallet-to-wallet transfer -- writes PENDING_APPROVAL only."""
+        payload = InternalTransferCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        data.setdefault("externalref", request.headers.get("Idempotency-Key") or str(uuid.uuid4()))
+        xfer = transfer_services.create_internal_transfer(wallet, requested_by=request.user, **data)
+        return Response(
+            envelope(success=True, data=TransferSerializer(xfer).data),
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
+    def approve(self, request, externalref=None):
+        """The only route that actually sends money (plan Section 8:
+        "separate permission class, optional maker-checker/approval step").
+        Staff-only via IsAdminUser.
+        """
+        xfer = self.get_object()
+        try:
+            xfer = transfer_services.approve_and_send_transfer(xfer, approved_by=request.user)
+        except (MoolreError, ValueError) as exc:
+            return _error_response(exc) if isinstance(exc, MoolreError) else Response(
+                envelope(success=False, message=str(exc)), status=status.HTTP_400_BAD_REQUEST
+            )
+        return Response(envelope(success=True, data=TransferSerializer(xfer).data))
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdminUser])
+    def reject(self, request, externalref=None):
+        xfer = self.get_object()
+        try:
+            xfer = transfer_services.reject_transfer(xfer, rejected_by=request.user)
+        except ValueError as exc:
+            return Response(envelope(success=False, message=str(exc)), status=status.HTTP_400_BAD_REQUEST)
+        return Response(envelope(success=True, data=TransferSerializer(xfer).data))
+
+    @action(detail=True, methods=["post"], url_path="confirm-otp")
+    def confirm_otp(self, request, externalref=None):
+        xfer = self.get_object()
+        payload = ConfirmTransferOtpSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        try:
+            xfer = transfer_services.confirm_transfer_otp(xfer, otpcode=payload.validated_data["otpcode"])
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=TransferSerializer(xfer).data))
+
+    @action(detail=True, methods=["get"], url_path="status")
+    def status_check(self, request, externalref=None):
+        xfer = self.get_object()
+        try:
+            xfer = transfer_services.check_transfer_status(xfer)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=TransferSerializer(xfer).data))
+
+
+class NameValidationViewSet(ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request):
+        payload = ValidateNameSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = dict(payload.validated_data)
+        wallet = data.pop("wallet")
+        try:
+            log = transfer_services.validate_name(wallet, **data)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(
+            envelope(success=True, data=NameValidationLogSerializer(log).data),
             status=status.HTTP_201_CREATED,
         )

@@ -217,3 +217,90 @@ class PaymentIdTerminalCreateSerializer(serializers.Serializer):
     phone = serializers.CharField()
     name = serializers.CharField()
     externalref = serializers.CharField(required=False)
+
+
+# ---------------------------------------------------------------------------
+# Transfers (disbursements) -- Milestone 5 scope (plan Section 8, "Disbursements")
+# ---------------------------------------------------------------------------
+
+from apps.transfers.models import NameValidationLog, Transfer  # noqa: E402
+
+
+class NameValidationLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NameValidationLog
+        fields = ["id", "receiver", "channel", "resolved_name", "status", "created_at"]
+        read_only_fields = fields
+
+
+class ValidateNameSerializer(serializers.Serializer):
+    """Input shape for POST /api/transfers/validate-name/."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    receiver = serializers.CharField()
+    channel = serializers.CharField()
+    sublistid = serializers.CharField(required=False)
+
+
+class TransferSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transfer
+        fields = [
+            "id",
+            "wallet",
+            "kind",
+            "channel",
+            "currency",
+            "amount",
+            "receiver",
+            "sublistid",
+            "externalref",
+            "reference",
+            "transactionid",
+            "thirdpartyref",
+            "status",
+            "fee",
+            "network_fee",
+            "requested_by",
+            "approved_by",
+            "approved_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id", "kind", "transactionid", "thirdpartyref", "status", "fee",
+            "network_fee", "requested_by", "approved_by", "approved_at",
+            "created_at", "updated_at",
+        ]
+
+
+class TransferCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/transfers/ (external MoMo/bank payout).
+
+    Only writes a PENDING_APPROVAL record -- plan Section 8: "gated by
+    permission/approval" -- see PATCH .../approve/.
+    """
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    channel = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    receiver = serializers.CharField()
+    externalref = serializers.CharField(required=False)
+    sublistid = serializers.CharField(required=False)
+    reference = serializers.CharField(required=False)
+
+
+class InternalTransferCreateSerializer(serializers.Serializer):
+    """Input shape for POST /api/transfers/internal/."""
+
+    wallet = serializers.PrimaryKeyRelatedField(queryset=Wallet.objects.all())
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    receiver = serializers.CharField()
+    externalref = serializers.CharField(required=False)
+    reference = serializers.CharField(required=False)
+
+
+class ConfirmTransferOtpSerializer(serializers.Serializer):
+    """Input shape for POST /api/transfers/{externalref}/confirm-otp/."""
+
+    otpcode = serializers.CharField()

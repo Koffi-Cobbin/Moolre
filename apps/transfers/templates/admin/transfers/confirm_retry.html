@@ -1,0 +1,20 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>Confirm transfer retry</h1>
+<p>You are about to retry sending real money for the following transfer(s). This cannot be undone.</p>
+<ul>
+  {% for xfer in transfers %}
+    <li>{{ xfer.externalref }} &mdash; {{ xfer.amount }} {{ xfer.currency }} to {{ xfer.receiver }}</li>
+  {% endfor %}
+</ul>
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="action" value="{{ action }}">
+  {% for xfer in transfers %}
+    <input type="hidden" name="{{ action_checkbox_name }}" value="{{ xfer.pk }}">
+  {% endfor %}
+  {{ form.as_p }}
+  <button type="submit">Confirm and retry</button>
+  <a href="{% url 'admin:transfers_transfer_changelist' %}">Cancel</a>
+</form>
+{% endblock %}

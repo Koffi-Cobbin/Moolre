@@ -47,6 +47,13 @@ class MoolreCode(str, Enum):
     VIRTUAL_ACCOUNT_CREATED = "AD19"    # account/create (type=9) success -- virtual bank account
     VIRTUAL_ACCOUNT_DUPLICATE_NAME = "AD32"  # virtual account creation failed, name already in use
 
+    # --- Transfers / disbursements (docs: validate-name, initiate-transfer,
+    #     transfer-status, internal-transfer) ---
+    NAME_VALIDATED = "AVD01"        # transact/validate success
+    NAME_NOT_FOUND = "AVD02"        # transact/validate: phone/account not found
+    TRANSFER_SUCCESS = "OBGH01"     # transact/transfer success (payout completed)
+    # TP14, TR099, TP13 (already defined above) are reused by internal_transfer()
+
     @classmethod
     def is_otp_required(cls, code: str) -> bool:
         return code == cls.OTP_REQUIRED.value

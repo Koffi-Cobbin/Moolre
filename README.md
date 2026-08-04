@@ -4,7 +4,9 @@ This is the Milestone 1 scaffold from `moolre-django-plan.md`
 ("Scaffolding: Django project, settings, `moolre_client` with `accounts` +
 `misc` endpoints only, admin skeleton") plus Milestone 2 ("Wallets"),
 Milestone 3 ("Collections: USSD push payment + status polling + webhook
-receiver"), and Milestone 4 ("Payment links & virtual accounts").
+receiver"), Milestone 4 ("Payment links & virtual accounts"), and
+Milestone 5 ("Disbursements: name validation → transfer → status, with an
+approval step before money moves").
 
 ## What's implemented
 
@@ -15,13 +17,13 @@ receiver"), and Milestone 4 ("Payment links & virtual accounts").
     timeout via `tenacity`, error mapping into `exceptions.py`.
   - `codes.py`: real Moolre response codes (`WC02`, `SW01`, `ST08`, `SD01`,
     `AIN04`, `TP13`, `TP14`, `TR099`, `P01`, `SS01`, `POS09`, `INP02`,
-    `AD14`, `AD19`, `AD32`) — pulled from `docs.moolre.com/ai/*` during
-    scaffolding, not guessed.
-  - `endpoints/accounts.py`, `endpoints/misc.py`, `endpoints/payments.py`
-    (`initiate_ussd()`, `status()`, `create_payment_link()`,
-    `create_virtual_account()`, `create_payment_id()`) — fully implemented.
-  - `endpoints/{transfers,sms,whatsapp}.py` — documented placeholders for
-    Milestones 5–6.
+    `AD14`, `AD19`, `AD32`, `AVD01`, `AVD02`, `OBGH01`) — pulled from
+    `docs.moolre.com/ai/*` during scaffolding, not guessed.
+  - `endpoints/{accounts,misc,payments,transfers}.py` — fully implemented.
+    Note: transfer channel codes (`1=MTN, 6=Telecel, 7=AT, 2=Bank`) are
+    *different* from USSD collection channel codes (`13=MTN, 6=Telecel,
+    7=AT`) — confirmed from the docs, not assumed to be the same enum.
+  - `endpoints/{sms,whatsapp}.py` — documented placeholders for Milestone 6.
   - `signing.py` — webhook verification. Moolre's documented webhook
     payload has no signature header, so this implements the plan's
     "verify, don't trust" fallback (re-check status) instead of HMAC —
@@ -42,12 +44,28 @@ receiver"), and Milestone 4 ("Payment links & virtual accounts").
   full flow from plan Section 6 (persist → validate → verify-via-status
   → update idempotently → 200 fast). Admin has "Re-check status" /
   "Resend webhook processing" actions.
+- **`apps/transfers/`** — full vertical slice implementing the plan's
+  maker-checker requirement (Section 8: "separate permission class,
+  optional maker-checker/approval step before the transfer is actually
+  sent to Moolre, and full audit logging of who triggered it"):
+  `create_transfer()`/`create_internal_transfer()` only ever write a local
+  `PENDING_APPROVAL` row — Moolre is never contacted. The *only* function
+  that sends money is `approve_and_send_transfer()`, which requires an
+  approving user. `NameValidationLog` + `Transfer` models, `validate_name`,
+  `confirm_transfer_otp`, `check_transfer_status`, `reject_transfer`
+  services, `transfer_completed`/`transfer_failed` signals (idempotent on
+  redelivery, same pattern as payments), and an admin with a guarded
+  "Retry transfer" action that renders an explicit confirmation page
+  before resending (plan Section 9).
 - **`apps/api/`** — DRF `WalletViewSet`, `PaymentRequestViewSet`,
-  `PaymentLinkViewSet`, `VirtualAccountViewSet`, `PaymentIdTerminalViewSet`
-  mirroring the plan's Wallets and Collections tables (list/create/retrieve
-  + `/balance/`, `/transactions/`, `/confirm-otp/`, `/status/`), wrapped in
-  the `{success, code, message, data}` envelope from Section 8, with
-  auto-generated `externalref`/`uref`/Idempotency-Key handling on create.
+  `PaymentLinkViewSet`, `VirtualAccountViewSet`, `PaymentIdTerminalViewSet`,
+  `TransferViewSet`, `NameValidationViewSet` mirroring the plan's tables
+  (list/create/retrieve + `/balance/`, `/transactions/`, `/confirm-otp/`,
+  `/status/`, `/approve/`, `/reject/`), wrapped in the `{success, code,
+  message, data}` envelope from Section 8. `Transfer` creation is open to
+  any authenticated user; `/approve/` and `/reject/` require staff
+  (`IsAdminUser`) — enforcing the maker-checker split at the permission
+  layer, not just in the service function.
 - **`apps/{transfers,messaging,ledger}/`** — valid, migratable Django apps
   with no models yet; each `models.py` documents exactly what lands there
   and in which milestone, per the plan's build order.
@@ -99,10 +117,18 @@ HTTP layer mocked:
   `API_PUBKEY` auth is used, matching the real docs — not `API_KEY`), plus
   their three DRF endpoints end-to-end (`/api/payments/links/`,
   `/api/payments/virtual-accounts/`, `/api/payments/payment-ids/`)
+- Milestone 5: `create_transfer()` asserted to make **zero** Moolre calls
+  (writes `PENDING_APPROVAL` only); `approve_and_send_transfer()` actually
+  sends and asserted to reject double-approval; internal-transfer OTP
+  flow (`TP14` → `confirm_transfer_otp()` → accepted); `reject_transfer()`
+  blocks a subsequent approval attempt; the DRF permission split tested
+  directly — a regular authenticated user gets `403` on `/approve/`, staff
+  gets `200` and the transfer actually sends (mocked); the guarded admin
+  "Retry transfer" action's intermediate confirmation page was rendered
+  and checked for content, not just imported
 
 ## Next up (per the plan's build order, Section 13)
 
-5. Disbursements (`apps/transfers/`)
 6. Messaging: SMS + WhatsApp (`apps/messaging/`)
 7. Round out the REST API layer for the above
 8. Hardening, then go-live
