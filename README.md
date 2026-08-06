@@ -2,12 +2,10 @@
 
 This is the Milestone 1 scaffold from `moolre-django-plan.md`
 ("Scaffolding: Django project, settings, `moolre_client` with `accounts` +
-`misc` endpoints only, admin skeleton") plus Milestone 2 ("Wallets"),
-Milestone 3 ("Collections: USSD push payment + status polling + webhook
-receiver"), Milestone 4 ("Payment links & virtual accounts"), Milestone 5
-("Disbursements: name validation → transfer → status, with an approval
-step before money moves"), and Milestone 6 ("Messaging: SMS send/status,
-sender ID management, WhatsApp templates/send/status").
+`misc` endpoints only, admin skeleton") plus Milestones 2 through 6
+(Wallets, Collections, Payment links & virtual accounts, Disbursements,
+Messaging), and the remaining gap from Milestone 7 (Reference/misc data
+endpoints, rounding out every table in plan Section 8).
 
 ## What's implemented
 
@@ -78,6 +76,14 @@ sender ID management, WhatsApp templates/send/status").
   endpoint, wrapped in the `{success, code, message, data}` envelope.
   `Transfer` and `SenderId` approval actions require staff (`IsAdminUser`),
   enforcing the maker-checker/approval split at the permission layer.
+  Plus `BanksReferenceView` / `ChannelsReferenceView` (plain `APIView`s,
+  not model-backed) completing the plan's "Reference / misc" table —
+  **caveat**: `docs.moolre.com/ai/miscellaneous-data.html` only documents
+  `data=banks` as a concrete example; the exact string for mobile money
+  channels isn't enumerated anywhere in the docs. Rather than fabricate
+  one, `ChannelsReferenceView` defaults to `"channels"` as a best guess
+  but accepts `?data=` to override — confirm the real value against
+  sandbox before relying on it.
 - **`apps/ledger/`** — the plan's one *optional*, unscheduled app (Section
   3: "internal double-entry bookkeeping / reconciliation"); still a valid,
   migratable Django app with no models, since it's out of the v1 build
@@ -150,15 +156,22 @@ HTTP layer mocked:
   tested directly on `/api/sms/sender-ids/{id}/approve/` (403 regular
   user, 200 staff)
 
+- Milestone 7: reference-data endpoints against a mocked layer (asserting
+  `API_KEY` auth, per the plan's own header table); confirmed the OpenAPI
+  schema (`/api/schema/`) generates cleanly with zero drf-spectacular
+  warnings across all 12 viewsets/views, and that the Swagger UI
+  (`/api/schema/docs/`) actually renders — not just that the URLconf
+  resolves
+
 ## Next up (per the plan's build order, Section 13)
 
-7. Round out the REST API layer's remaining gaps (plan Section 8's
-   "Reference / misc" table — banks/channels lookup — is the one row not
-   yet wired to an endpoint)
-8. Hardening: rate limiting on transfer/messaging endpoints, audit logging
-   on money-moving actions (partially done via `requested_by`/`approved_by`
-   on `Transfer`)
+8. Hardening: rate limiting on transfer/messaging endpoints, more audit
+   logging on money-moving actions (partially done via `requested_by`/
+   `approved_by` on `Transfer`)
 9. Go-live: switch to live keys, load-test the webhook endpoint, monitoring/
    alerts on failed transfers and webhook processing errors
 
-All 6 v1 milestones from the plan's build order are now implemented.
+Every table in the plan's REST API layer (Section 8) is now backed by a
+real endpoint, and all 6 v1 milestones plus the REST API rollout
+(Milestone 7) are implemented. What's left is hardening and go-live —
+config/process work rather than new application code.

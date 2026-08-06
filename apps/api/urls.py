@@ -1,6 +1,9 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    BanksReferenceView,
+    ChannelsReferenceView,
     NameValidationViewSet,
     PaymentIdTerminalViewSet,
     PaymentLinkViewSet,
@@ -27,7 +30,7 @@ router.register(r"sms", SmsMessageViewSet, basename="sms-message")
 router.register(r"whatsapp/templates", WhatsAppTemplateViewSet, basename="whatsapp-template")
 router.register(r"whatsapp/messages", WhatsAppMessageViewSet, basename="whatsapp-message")
 
-urlpatterns = router.urls
-
-# Reference-data routes (plan Section 8, "Reference / misc") are added
-# here if that read-only slice is ever prioritized.
+urlpatterns = router.urls + [
+    path("reference/banks/", BanksReferenceView.as_view(), name="reference-banks"),
+    path("reference/channels/", ChannelsReferenceView.as_view(), name="reference-channels"),
+]

@@ -22,7 +22,9 @@ from rest_framework.permissions import IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 
+from apps.moolre_client.client import MoolreClient
 from apps.moolre_client.exceptions import MoolreAPIError, MoolreError, MoolreValidationError
+from django.conf import settings as django_settings
 from apps.wallets import services
 from apps.wallets.models import Wallet
 
@@ -440,6 +442,7 @@ class TransferViewSet(viewsets.ModelViewSet):
 
 class NameValidationViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
+    serializer_class = ValidateNameSerializer  # schema hint only; create() does the real validation
 
     def create(self, request):
         payload = ValidateNameSerializer(data=request.data)
@@ -643,3 +646,58 @@ class WhatsAppMessageViewSet(viewsets.ModelViewSet):
         except MoolreError as exc:
             return _error_response(exc)
         return Response(envelope(success=True, data=WhatsAppMessageSerializer(records, many=True).data))
+
+
+# ---------------------------------------------------------------------------
+# Reference / misc data (plan Section 8's last table). Not a model-backed
+# resource -- straight pass-through to moolre_client.misc.reference_data().
+# ---------------------------------------------------------------------------
+
+from rest_framework.views import APIView
+from drf_spectacular.utils import extend_schema
+
+
+class BanksReferenceView(APIView):
+    """GET /api/reference/banks/?country=gha -> transact/data (data=banks).
+
+    "banks" is the literal `data` value confirmed on
+    docs.moolre.com/ai/miscellaneous-data.html's own example.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=None)
+    def get(self, request):
+        country = request.query_params.get("country", "gha")
+        client = MoolreClient.from_settings(django_settings.MOOLRE)
+        try:
+            response = client.misc.reference_data(country=country, data="banks")
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=response.get("data")))
+
+
+class ChannelsReferenceView(APIView):
+    """GET /api/reference/channels/?country=gha[&data=...] -> transact/data.
+
+    CAUTION: docs.moolre.com/ai/miscellaneous-data.html only documents
+    "banks" as a concrete example of the `data` parameter -- it does not
+    enumerate the exact string for mobile money channels. Rather than
+    guess and present a fabricated value as fact, this defaults to
+    "channels" (best guess) but lets the caller override via `?data=` if
+    Moolre's real value turns out to differ. Confirm the correct value
+    against sandbox before relying on this in production.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses=None)
+    def get(self, request):
+        country = request.query_params.get("country", "gha")
+        data_type = request.query_params.get("data", "channels")
+        client = MoolreClient.from_settings(django_settings.MOOLRE)
+        try:
+            response = client.misc.reference_data(country=country, data=data_type)
+        except MoolreError as exc:
+            return _error_response(exc)
+        return Response(envelope(success=True, data=response.get("data")))
